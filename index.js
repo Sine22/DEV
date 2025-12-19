@@ -10,18 +10,12 @@ app.get('/', (req, res) => {
   res.json(Sample(req.headers.host))
 })
 
-var server = app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Listening on port ${port}`)
 })
 
 process.on('SIGINT', () => {
-  console.log('Stopping ...');
-  server.close(() => {
-    console.log('Stopped');
-  });
-});
+  server.close(() => console.log('Stopped'))
+})
 
-module.exports = {
-  Sample,
-  server
-};
+module.exports = { Sample, server }
