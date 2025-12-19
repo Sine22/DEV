@@ -15,13 +15,6 @@ spec:
     spec:
       containers:
         - name: myapp
-          image: myapp:latest
-          imagePullPolicy: IfNotPresent
+          image: ttl.sh/myapp:2h
           ports:
             - containerPort: 4444
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 4444
-            initialDelaySeconds: 3
-            periodSeconds: 5
