@@ -16,25 +16,16 @@ pipeline {
                 }
             }
         }
-        stage('Deploy') {
+		  stage('Push Registry') {
+		      steps {
+                sh 'docker build . --tag ttl.sh/app_aung:1h'
+                sh 'docker push ttl.sh/app_aung:1h'
+            }
+		  }
+		  stage('Deploy to Kubernetes') {
             steps {
-                withCredentials([sshUserPrivateKey(credentialsId: 'target_key', keyFileVariable: 'FILENAME', usernameVariable: 'USERNAME')]) {
-                    sh '''
-                        set -e
-                        mkdir -p /home/laborant/app
-                        cp index.js package.json package-lock.json /home/laborant/app/
-                        chmod 755 /home/laborant/app/index.js
-                        cd /home/laborant/app && npm ci
-                        sudo cp myapp.service /etc/systemd/system/myapp.service
-                        sudo systemctl daemon-reload
-                        sudo systemctl enable myapp
-                        sudo systemctl restart myapp
-                                                      '''
-                    sh '''
-                        sudo systemctl restart docker
-                        docker stop app_sine || true
-                        docker rm app_sine || true
-                        docker run -d --restart always -p 4444:4444 --name app_sine ttl.sh/app_sine:1h'''
+                withKubeConfig([credentialsId: 'k8key', serverUrl: 'https://kubernetes:6443']) {
+                    sh 'kubectl apply -f pod.yaml'
                 }
             }
         }
