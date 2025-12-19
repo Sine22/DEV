@@ -31,10 +31,10 @@ pipeline {
                         sudo systemctl restart myapp
                                                       '''
                     sh '''
-                    sudo systemctl restart docker
-                    docker stop app_sine || true
-                    docker rm app_sine || true
-                    docker run -d --restart always -p 4444:4444 --name app_sine ttl.sh/app_sine:1h'''
+                        sudo systemctl restart docker
+                        docker stop app_sine || true
+                        docker rm app_sine || true
+                        docker run -d --restart always -p 4444:4444 --name app_sine ttl.sh/app_sine:1h'''
                 }
             }
         }
