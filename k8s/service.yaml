@@ -7,7 +7,5 @@ spec:
   selector:
     app: myapp
   ports:
-    - name: http
-      port: 4444
+    - port: 4444
       targetPort: 4444
-  type: ClusterIP
