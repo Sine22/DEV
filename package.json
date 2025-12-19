@@ -1,8 +1,8 @@
 {
   "name": "myapp",
   "version": "1.0.0",
-  "main": "index.js",
   "type": "commonjs",
+  "main": "index.js",
   "dependencies": {
     "express": "^4.19.2"
   },
