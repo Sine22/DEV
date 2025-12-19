@@ -4,11 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/myapp
 ExecStart=/usr/bin/node /opt/myapp/index.js
+WorkingDirectory=/opt/myapp
 Restart=always
 RestartSec=3
-Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target
