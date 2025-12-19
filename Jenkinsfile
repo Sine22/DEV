@@ -1,111 +1,72 @@
 pipeline {
   agent any
 
+  tools {
+    nodejs "node24"   // change to your Jenkins NodeJS tool name
+  }
+
   environment {
-    APP_NAME = "myapp"
-    APP_PORT = "4444"
-
-    // ======== CHANGE THESE 2 HOSTS ========
-    TARGET_HOST = "TARGET_VM_IP_OR_DNS"
-    DOCKER_HOST = "DOCKER_VM_IP_OR_DNS"
-    // =====================================
-
-    // Kubernetes API endpoint given by your task
-    KUBE_URL = "https://kubernetes:6443"
-    KUBE_NS  = "production"
-
+    APP   = "myapp"
+    PORT  = "4444"
+    IMG   = "ttl.sh/myapp:2h"
+    KUBE  = "https://kubernetes:6443"
+    NS    = "production"
     TARGET_DIR = "/opt/myapp"
-    TARGET_SERVICE = "myapp"
-
-    DOCKER_IMAGE = "myapp:latest"
   }
 
   stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
-
-    stage('Install deps') {
+    stage('Test') {
       steps {
         sh '''
-          set -eux
-          node -v
-          npm -v
           npm install
-        '''
-      }
-    }
-
-    stage('Unit Tests') {
-      steps {
-        sh '''
-          set -eux
           node --test
         '''
       }
     }
 
-    stage('Deploy to Target (systemd)') {
+    stage('Build & Push Docker Image') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'target-ssh',
-                                           keyFileVariable: 'KEY',
-                                           usernameVariable: 'USER')]) {
-          sh '''
-            set -eux
+        sh """
+          docker build -t ${IMG} .
+          docker push ${IMG}
+        """
+      }
+    }
 
-            # Create app folder
-            ssh -o StrictHostKeyChecking=no -i "$KEY" $USER@$TARGET_HOST "sudo mkdir -p ${TARGET_DIR} && sudo chown -R $USER:$USER ${TARGET_DIR}"
+    stage('Deploy to Target VM (systemd)') {
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'mykey', keyFileVariable: 'KEY', usernameVariable: 'USER')]) {
+          sh """
+            ssh -o StrictHostKeyChecking=no -i ${KEY} ${USER}@target 'sudo mkdir -p ${TARGET_DIR} && sudo chown -R ${USER}:${USER} ${TARGET_DIR}'
+            scp -o StrictHostKeyChecking=no -i ${KEY} index.js ${USER}@target:${TARGET_DIR}/index.js
+            scp -o StrictHostKeyChecking=no -i ${KEY} -r node_modules ${USER}@target:${TARGET_DIR}/node_modules
+            scp -o StrictHostKeyChecking=no -i ${KEY} deploy/myapp.service ${USER}@target:/tmp/myapp.service
 
-            # Copy runtime files (must include node_modules for systemd target run)
-            scp -o StrictHostKeyChecking=no -i "$KEY" index.js $USER@$TARGET_HOST:${TARGET_DIR}/index.js
-            scp -o StrictHostKeyChecking=no -i "$KEY" -r node_modules $USER@$TARGET_HOST:${TARGET_DIR}/node_modules
-            scp -o StrictHostKeyChecking=no -i "$KEY" deploy/myapp.service $USER@$TARGET_HOST:/tmp/myapp.service
-
-            # Install NodeJS 24 on target if missing
-            ssh -o StrictHostKeyChecking=no -i "$KEY" $USER@$TARGET_HOST '
+            ssh -o StrictHostKeyChecking=no -i ${KEY} ${USER}@target '
               if ! node -v 2>/dev/null | grep -q "^v24"; then
                 curl -fsSL https://deb.nodesource.com/setup_24.x -o nodesource_setup.sh
                 sudo -E bash nodesource_setup.sh
                 sudo apt-get update
                 sudo apt-get install -y nodejs
               fi
-            '
-
-            # Setup systemd service
-            ssh -o StrictHostKeyChecking=no -i "$KEY" $USER@$TARGET_HOST "
-              sudo mv /tmp/myapp.service /etc/systemd/system/${TARGET_SERVICE}.service
+              sudo mv /tmp/myapp.service /etc/systemd/system/myapp.service
               sudo systemctl daemon-reload
-              sudo systemctl enable ${TARGET_SERVICE}
-              sudo systemctl restart ${TARGET_SERVICE}
-              sudo systemctl --no-pager --full status ${TARGET_SERVICE} || true
-            "
-          '''
+              sudo systemctl enable myapp
+              sudo systemctl restart myapp
+            '
+          """
         }
       }
     }
 
     stage('Deploy to Docker VM') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: 'docker-ssh',
-                                           keyFileVariable: 'DKEY',
-                                           usernameVariable: 'DUSER')]) {
-          sh '''
-            set -eux
-
-            # Copy project to Docker VM
-            ssh -o StrictHostKeyChecking=no -i "$DKEY" $DUSER@$DOCKER_HOST "rm -rf /tmp/myapp && mkdir -p /tmp/myapp"
-            scp -o StrictHostKeyChecking=no -i "$DKEY" -r . $DUSER@$DOCKER_HOST:/tmp/myapp
-
-            # Build and run container on Docker VM
-            ssh -o StrictHostKeyChecking=no -i "$DKEY" $DUSER@$DOCKER_HOST "
-              set -eux
-              cd /tmp/myapp
-              docker build -t ${DOCKER_IMAGE} .
-              docker rm -f ${APP_NAME} || true
-              docker run -d --name ${APP_NAME} -p ${APP_PORT}:${APP_PORT} ${DOCKER_IMAGE}
-              docker ps | grep ${APP_NAME}
-            "
-          '''
+        withCredentials([sshUserPrivateKey(credentialsId: 'mykey', keyFileVariable: 'KEY', usernameVariable: 'USER')]) {
+          sh """
+            ssh -o StrictHostKeyChecking=no -i ${KEY} ${USER}@docker 'docker stop ${APP} || true'
+            ssh -o StrictHostKeyChecking=no -i ${KEY} ${USER}@docker 'docker rm ${APP} || true'
+            ssh -o StrictHostKeyChecking=no -i ${KEY} ${USER}@docker 'docker run --name ${APP} --pull always -d -p ${PORT}:${PORT} ${IMG}'
+          """
         }
       }
     }
@@ -113,24 +74,21 @@ pipeline {
     stage('Deploy to Kubernetes') {
       steps {
         withCredentials([string(credentialsId: 'kube-token', variable: 'KUBE_TOKEN')]) {
-          sh '''
-            set -eux
-
-            # Build kubeconfig for kubectl
+          sh """
             cat > kubeconfig <<EOF
 apiVersion: v1
 kind: Config
 clusters:
-- cluster:
-    server: ${KUBE_URL}
+- name: k8s
+  cluster:
+    server: ${KUBE}
     insecure-skip-tls-verify: true
-  name: k8s
 contexts:
-- context:
+- name: ctx
+  context:
     cluster: k8s
     user: jenkins
-    namespace: ${KUBE_NS}
-  name: ctx
+    namespace: ${NS}
 current-context: ctx
 users:
 - name: jenkins
@@ -140,14 +98,15 @@ EOF
 
             export KUBECONFIG=$PWD/kubeconfig
 
-            kubectl apply -f k8s/namespace.yaml
-            kubectl -n ${KUBE_NS} apply -f k8s/deployment.yaml
-            kubectl -n ${KUBE_NS} apply -f k8s/service.yaml
+            kubectl create ns ${NS} --dry-run=client -o yaml | kubectl apply -f -
 
-            kubectl -n ${KUBE_NS} rollout status deploy/${APP_NAME} --timeout=120s
-            kubectl -n ${KUBE_NS} get pods -o wide
-            kubectl -n ${KUBE_NS} get svc
-          '''
+            # overwrite image to ttl.sh so K8s can pull
+            kubectl -n ${NS} apply -f k8s/service.yaml
+            kubectl -n ${NS} apply -f k8s/deployment.yaml
+            kubectl -n ${NS} set image deploy/${APP} ${APP}=${IMG} --record=true
+
+            kubectl -n ${NS} rollout status deploy/${APP} --timeout=120s
+          """
         }
       }
     }
